@@ -1,0 +1,329 @@
+---
+title: "Health and Economical Impact of Weather Events in the U.S"
+author: "Javier"
+date: "06-04-2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Synopsis
+
+The present document aims to determine which Weather Event(s) in the U.S is(are) the most harmful, from a population health viewpoint, and an economical perspective.
+
+The National Oceanic and Atmospheric Administration[^1] or NOAA, provides the ["Storm Data" csv file](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2), which contains a record of the casualties and damage caused by weather events across the country, as well as [suplemental documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf), for said database.
+
+This document, written as a .Rmd file, provides all the R programming code used to access and process the data, as well as to analyze it, so that this short study can be reproduced and vetted.
+
+## Data Processing
+
+The first step is to download NOAA's Storm Database, and get a look at the variables the database holds.
+```{r Data Download, echo=TRUE, message=FALSE, warning=FALSE}
+if(!file.exists("StormData.csv.bz2")){
+  download.file(url = "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2",
+              destfile = "StormData.csv.bz2",
+              method = "curl")
+  }
+Storm_Data <- read.csv("StormData.csv.bz2")
+file.remove("StormData.csv.bz2")
+summary(Storm_Data)
+str(Storm_Data)
+head(Storm_Data)
+```
+
+An initial look tells us that there are 902.297 observations of 37 variables within the dataframe.
+
+Before even attempting to analyze the data, the variables definitions must be checked, and reading the [FAQs](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf) provided by NOAA in regard to the Storm Data should not hurt.
+
+What can be gathered from the files (database included), is that the database attempts to record "hydro-meteorological events" (or segments of them), including the date, time (noting the local timezone) and even coordinates they begin and end, the counties they take place at (whether or not they originated within said territory)[^2]. The database also records the casualties (injuries AND fatalities) and damage (property and crops) caused by the event/segment.
+
+However, the word "attempted" is used because the earliest record is from 1950, for which only 19 of the variables have been recorded, and, in comparison, the location of the event's "inception" and the date and time it subsides do not seem to have been tracked until 1995. This apparent lack of integrity does not stem from a substandard recording work, but more likely, this database's list of variables has been expanded with time, yet the earlier observations did not record the more recently incorporated variable. In other words, this database is probably a makeshift created from the integration of older and newer files.
+
+Still, though the database is incomplete, at least the beginning date and time, type of event, and the damage measuring variables are recorded. All that's left is to decide how the damage will be measured. A simple aggregation of the injured, dead, and money lost in property and crop damage sounds simple enough, but introducing the time variable to observe the time variation of the impact of the events surely makes things more interesting, so, subsetting/slicing the Storm_Data dataframe comes next.
+
+Of course, given that the dates have been recorded as "character" class variables, they must be formatted, in order to leave only the year the segments/events took place. Perhaps if a daily or weekly study was done, it would be worthy to parse the date and time variables, and "shift" all observations to the UTC timezone, but for the proposed yearly analysis, slicing only the year of each event/segment will suffice.
+
+```{r Subset, echo=TRUE, message=FALSE, warning=FALSE}
+library(lubridate)
+
+Casualties_Data <- subset(Storm_Data, select = c(BGN_DATE, EVTYPE, as.numeric(as.character(FATALITIES)), as.numeric(as.character(INJURIES))))
+Casualties_Data$BGN_DATE <- year(as.Date(as.character(Casualties_Data$BGN_DATE), format = "%m/%d/%Y %H:%M:%S"))
+
+Damage_Data <- subset(Storm_Data, select = c(BGN_DATE, EVTYPE, as.numeric(PROPDMG), PROPDMGEXP, as.numeric(CROPDMG), CROPDMGEXP))
+Damage_Data$BGN_DATE <- year(as.Date(as.character(Damage_Data$BGN_DATE), format = "%m/%d/%Y %H:%M:%S"))
+
+#It could be argued that repeating the formatting code line for both sub-dataframes is a waste, but it ought to be sensible to maintain the integrity of the original data
+```
+
+Now, after getting the dataframes with the relevant data, the damages observations must be modified; the PROPDMGEXP and CROPDMGEXP are variables to designate that the PROP and CROP DMG observations are, in fact, measured in the thousands (K), the millions (M), etc.. Hence, the observations must be multiplied by 1, 1000, etc. depending on the EXP value.But what are the actual tags? How can one make sure without looking at all the data? Well...
+
+```{r checking scales of damage, echo=TRUE, message=FALSE, warning=FALSE}
+barplot(prop.table(table(Storm_Data$PROPDMGEXP)))
+barplot(prop.table(table(Storm_Data$CROPDMGEXP)))
+```
+
+Therefore, given the variety of multipliers, the following code chunk will transform and present the damages as plain numbers. AS A SIDE NOTE, initially, a loop line of code with i = [1 : N° of observations] was formulated. However, it takes too long to compute the replacement with it, and as such, Eric Brener's[^3] work proved to be a simpler, more streamlined and elegant solution. However, the advantage of the loop method presented as inactive code is that instead of replacing the denominators, it immediately would replace the "factorized" values for their actual values, e.g 11K for 11.000.
+
+```{r formatting data, echo=TRUE, message=FALSE, warning=FALSE}
+
+Damage_Data$PROPDMGEXP <- 
+  ifelse (Damage_Data$PROPDMGEXP == "K", as.numeric(format(1000, scientific = FALSE)),
+    ifelse (Damage_Data$PROPDMGEXP == "M", as.numeric(format(1000000, scientific = FALSE)),
+      ifelse (Damage_Data$PROPDMGEXP == "m", as.numeric(format(1000000, scientific = FALSE)),
+        ifelse (Damage_Data$PROPDMGEXP == "B", as.numeric(format(1000000000, scientific = FALSE)),
+          ifelse(Damage_Data$PROPDMGEXP == "H", as.numeric(format(100, scientific = FALSE)),
+            ifelse(Damage_Data$PROPDMGEXP == "h", as.numeric(format(100, scientific = FALSE)),
+              ifelse(Damage_Data$PROPDMGEXP == "1", as.numeric(format(10, scientific = FALSE)),
+                ifelse(Damage_Data$PROPDMGEXP == "2", as.numeric(format(100, scientific = FALSE)),
+                  ifelse(Damage_Data$PROPDMGEXP == "3", as.numeric(format(1000, scientific = FALSE)),
+                    ifelse(Damage_Data$PROPDMGEXP == "4", as.numeric(format(10000, scientific = FALSE)),
+                      ifelse(Damage_Data$PROPDMGEXP == "5", as.numeric(format(100000, scientific = FALSE)),
+                        ifelse(Damage_Data$PROPDMGEXP == "6", as.numeric(format(1000000, scientific = FALSE)),
+                          ifelse(Damage_Data$PROPDMGEXP == "7", as.numeric(format(10000000, scientific = FALSE)),
+                            ifelse(Damage_Data$PROPDMGEXP == "8", as.numeric(format(100000000, scientific = FALSE)),
+                            as.numeric(1)))))))))))))))
+
+Damage_Data$PROPDMG <- (Damage_Data$PROPDMG * Damage_Data$PROPDMGEXP)
+
+Damage_Data$CROPDMGEXP <-
+  ifelse (Damage_Data$CROPDMGEXP == "K", as.numeric(format(1000, scientific = FALSE)),
+    ifelse (Damage_Data$CROPDMGEXP == "k", as.numeric(format(1000, scientific = FALSE)),
+      ifelse (Damage_Data$CROPDMGEXP == "M", as.numeric(format(1000000, scientific = FALSE)),
+        ifelse(Damage_Data$CROPDMGEXP == "m", as.numeric(format(1000000, scientific = FALSE)),
+          ifelse(Damage_Data$CROPDMGEXP == "B", as.numeric(format(1000000000, scientific = FALSE)),
+            ifelse(Damage_Data$CROPDMGEXP == "2", as.numeric(format(100, scientific = FALSE)),
+              as.numeric(1)))))))
+
+Damage_Data$CROPDMG <- (Damage_Data$CROPDMG * Damage_Data$CROPDMGEXP)
+
+Damage_Data <- subset(Damage_Data, select = -CROPDMGEXP)
+Damage_Data <- subset(Damage_Data, select = -PROPDMGEXP)
+
+#for (i in 1:length(Damage_Data$BGN_DATE)) {
+#  if(Damage_Data$PROPDMGEXP[i] == "K") {
+#    Damage_Data$PROPDMG[i] <- Damage_Data$PROPDMG[i] * 1000
+#    }
+#  else if(Damage_Data$PROPDMGEXP[i] == "M") {
+#    Damage_Data$PROPDMG[i] <- Damage_Data$PROPDMG[i] * 1000000
+#    }
+#  else if(Damage_Data$PROPDMGEXP[i] == "h") {
+#    Damage_Data$PROPDMG[i] <- Damage_Data$PROPDMG[i] * 100
+#    }
+#  else if(Damage_Data$PROPDMGEXP[i] == "B") {
+#    Damage_Data$PROPDMG[i] <- Damage_Data$PROPDMG[i] * 1000000000
+#    }
+#  else {
+#    Damage_Data$PROPDMG[i] <- Damage_Data$PROPDMG[i] * 1
+#    }
+#}
+
+#for (j in 1:length(Damage_Data$BGN_DATE)) {
+#  if(Damage_Data$CROPDMGEXP[j] == "K") {
+#    Damage_Data$CROPDMG[j] <- Damage_Data$CROPDMG[j] * 1000
+#    }
+#  else if(Damage_Data$CROPDMGEXP[j] == "k") {
+#    Damage_Data$CROPDMG[j] <- Damage_Data$CROPDMG[j] * 1000
+#    }
+#  else if(Damage_Data$CROPDMGEXP[j] == "M") {
+#    Damage_Data$CROPDMG[j] <- Damage_Data$CROPDMG[j] * 1000000
+#    }
+#  else if(Damage_Data$CROPDMGEXP[j] == "m") {
+#    Damage_Data$CROPDMG[j] <- Damage_Data$CROPDMG[j] * 1000000
+#    }
+#  else if(Damage_Data$CROPDMGEXP[j] == "B") {
+#    Damage_Data$CROPDMG[j] <- Damage_Data$CROPDMG[j] * 1000000000
+#    }
+#  else {
+#    Damage_Data$CROPDMG[j] <- Damage_Data$CROPDMG[j] * 1
+#    }
+#}
+```
+
+Now that the data has been simplified, it must be aggregated. As such, the following chunk sums the injuries, fatalities, property damage values, and crop damage values, subtotaling by year and event type. HOWEVER, given that the objective is to get a comprehensive analysis by year AND by type of event, it should be convenient to count the types of events, which, according to the following code, amount to:
+
+```{r Types of Events, echo=TRUE, message=FALSE, warning=FALSE}
+length(unique(Damage_Data$EVTYPE))
+```
+
+Which would mean the same number of plotlines, or even subplots would be generated. Therefore, it is a sensible move to compile the events in more generalized categories, which can be done by means of regular expressions, as done by Joel Tworek[^4].
+
+```{r Events Categories, echo=TRUE, message=FALSE, warning=FALSE}
+
+Damage_Data$Event_Category <- ifelse(grepl("LIGHTNING|LIGNTNING", Damage_Data$EVTYPE), "LIGHTNING", 
+    ifelse(grepl("RAIN|FLOOD|WET|FLD", Damage_Data$EVTYPE), "RAIN - WATER",
+      ifelse(grepl("HAIL|SNOW|WINTER|WINTRY|BLIZZARD|SLEET|COLD|ICE|FREEZE|AVALANCHE|ICY", Damage_Data$EVTYPE), "WINTER - FREEZING PRECIPITATION",
+       ifelse(grepl("TORNADO|FUNNEL|WIND|HURRICANE", Damage_Data$EVTYPE), "HURRICANE - TORNADO - HIGH WINDS",
+        ifelse(grepl("STORM|THUNDER|TSTM|TROPICAL +STORM", Damage_Data$EVTYPE), "STORM",
+          ifelse(grepl("FIRE", Damage_Data$EVTYPE), "FIRE",
+           ifelse(grepl("FOG|VISIBILITY|DARK|DUST", Damage_Data$EVTYPE), "REDUCED VISIBILITY",
+            ifelse(grepl("WAVE|SURF|SURGE|TIDE|TSUNAMI|CURRENT|SWELL", Damage_Data$EVTYPE), "MARITIME EVENTS",
+             ifelse(grepl("HEAT|HIGH +TEMP|RECORD +TEMP|WARM|DRY", Damage_Data$EVTYPE), "HIGH TEMPERATURES",
+              ifelse(grepl("VOLCAN", Damage_Data$EVTYPE), "VOLCANO",
+               ifelse(grepl("DROUGHT", Damage_Data$EVTYPE), "DROUGHT",
+               "OTHER")))))))))))
+
+Casualties_Data$Event_Category <- ifelse(grepl("LIGHTNING|LIGNTNING", Casualties_Data$EVTYPE), "LIGHTNING", 
+    ifelse(grepl("RAIN|FLOOD|WET|FLD", Casualties_Data$EVTYPE), "RAIN - WATER",
+      ifelse(grepl("HAIL|SNOW|WINTER|WINTRY|BLIZZARD|SLEET|COLD|ICE|FREEZE|AVALANCHE|ICY", Casualties_Data$EVTYPE), "WINTER - FREEZING PRECIPITATION",
+       ifelse(grepl("TORNADO|FUNNEL|WIND|HURRICANE", Casualties_Data$EVTYPE), "HURRICANE - TORNADO - HIGH WINDS",
+        ifelse(grepl("STORM|THUNDER|TSTM|TROPICAL +STORM", Casualties_Data$EVTYPE), "STORM",
+          ifelse(grepl("FIRE", Casualties_Data$EVTYPE), "FIRE",
+           ifelse(grepl("FOG|VISIBILITY|DARK|DUST", Casualties_Data$EVTYPE), "REDUCED VISIBILITY",
+            ifelse(grepl("WAVE|SURF|SURGE|TIDE|TSUNAMI|CURRENT|SWELL", Casualties_Data$EVTYPE), "MARITIME EVENTS",
+             ifelse(grepl("HEAT|HIGH +TEMP|RECORD +TEMP|WARM|DRY", Casualties_Data$EVTYPE), "HIGH TEMPERATURES",
+              ifelse(grepl("VOLCAN", Casualties_Data$EVTYPE), "VOLCANO",
+               ifelse(grepl("DROUGHT", Casualties_Data$EVTYPE), "DROUGHT",
+               "OTHER")))))))))))
+
+#Again, in order to preserve the original dataframe, the code is used redundantly for both sub-frames.
+
+paste("The", length(unique(Damage_Data$EVTYPE)), "event types are compiled into", length(unique(Damage_Data$Event_Category)), "categories, which are:")
+
+unique(Damage_Data$Event_Category)
+```
+
+So, after (1) obtaining the data, (2) analyzing it and getting a grasp regarding the way it was framed, (3) transforming it so that it can be worked with, and (4) summarizing the numerous types of weather events into just a dozen, the data can be finally (5) aggregated by the kind of weather events and by time.
+
+```{r Aggregating Data, echo=TRUE, message=FALSE, warning=FALSE}
+Damage_aggregation <- aggregate(list(Property_Damage = Damage_Data$PROPDMG, Crops_Damage = Damage_Data$CROPDMG), by = list(Event = Damage_Data$Event_Category, year = Damage_Data$BGN_DATE), na.rm = TRUE, FUN = sum)
+
+Damage_total <- aggregate(list(Property_Damage = Damage_Data$PROPDMG, Crops_Damage = Damage_Data$CROPDMG), by = list(Event = Damage_Data$Event_Category), na.rm = TRUE, FUN = sum)
+
+Casualties_aggregation <- aggregate(list(Fatalities = Casualties_Data$FATALITIES, Injuries = Casualties_Data$INJURIES), by = list(Event = Casualties_Data$Event_Category, year = Casualties_Data$BGN_DATE), na.rm = TRUE, FUN = sum)
+
+Casualties_total <- aggregate(list(Fatalities = Casualties_Data$FATALITIES, Injuries = Casualties_Data$INJURIES), by = list(Event = Casualties_Data$Event_Category), na.rm = TRUE, FUN = sum)
+```
+
+So, the data can finally be (6) analyzed to determine which weather events are more damaging to property and which are more lethal
+
+## Results
+
+#### It's relevant to mention that, because of an almost exponential difference in the values between the events, each plot has its own scale for the y axis, so it should be taken in consideration. when looking at each plot.
+
+```{r Property Results, fig.width = 12, echo=TRUE, message=FALSE, warning=FALSE}
+
+library(ggplot2)
+options(scipen=999)
+
+propdmg <- ggplot(Damage_total, aes(Event, Property_Damage))
+propdmg <- propdmg + geom_bar(stat="identity", position = "dodge") + ggtitle("Property Damage vs Event Category") + theme(axis.text.x = element_text(angle = 90))
+propdmg <- propdmg + scale_y_continuous(labels = scales::comma)
+print(propdmg)
+
+propdmg_vs_year<- ggplot(Damage_aggregation, aes(year, Property_Damage, fill = Event))
+propdmg_vs_year <- propdmg_vs_year + geom_bar(stat="identity") + ggtitle("Yearly Property Damage by Event") + facet_wrap(.~Event, scales = "free_y") + theme(axis.text.x = element_text(angle = 90))
+propdmg_vs_year <- propdmg_vs_year + scale_y_continuous(labels = scales::comma) + coord_cartesian(xlim = c(1970, 2011))
+print(propdmg_vs_year)
+```
+
+So, it is clear that, accumulated over the years, Rain, Floods and other Water related weather events have caused the most property damage, followed very closely by Hurricanes, Tornadoes and High Winds.
+
+Nevertheless, the damage done by tornadoes clearly has been measured SINCE a lot earlier than other events, and, although the lack of observations for the RAIN-WATER category could be attributed to the recent HIGHLY VISIBLE effects of climate change, it's more likely that it is a lack of data what gives high winds its 2° place.
+
+#### So, Heavy Rains and Floods are likely to be the most damaging weather phenomena towards property, but when looked from a a "continuity" point of if view, if in fact, floods and heavy rain were not a problem prior to 1990, perhaps hurricanes and tornadoes have been a bigger threat.
+
+```{r Crops Results, fig.width = 12, echo=TRUE, message=FALSE, warning=FALSE}
+
+library(ggplot2)
+options(scipen=999)
+
+cropdmg <- ggplot(Damage_total, aes(Event, Crops_Damage))
+cropdmg <- cropdmg + geom_bar(stat="identity", position = "dodge") + ggtitle("Crops Damage vs Event Category") + theme(axis.text.x = element_text(angle = 90))
+cropdmg <- cropdmg + scale_y_continuous(labels = scales::comma)
+print(cropdmg)
+
+cropdmg_vs_year<- ggplot(Damage_aggregation, aes(year, Crops_Damage, fill = Event))
+cropdmg_vs_year <- cropdmg_vs_year + geom_bar(stat="identity", position = "dodge") + ggtitle("Yearly Crops Damage by Event")+ facet_wrap(.~Event, scales = "free_y") + theme(axis.text.x = element_text(angle = 90))
+cropdmg_vs_year <- cropdmg_vs_year  + scale_y_continuous(labels = scales::comma) + coord_cartesian(xlim = c(1990, 2011))
+print(cropdmg_vs_year)
+```
+
+In turn, (1) Droughts, (2) Heavy Rain and Floods and others, and (3) Winter/Freezing events, in that same order, cause the most damage to crops, which, upon further thinking, it's not really surprising. Although different crops require different nurturing, for example, corn requires relative little water, whereas bananas require a lot, not to mention the temperature issue, these events escape the status quo specific to each crop, EVEN if, over decades, if not hundreds of years, their location/area has been planned for.
+
+It is worth noticing that, the Rain Water category created for this analysis only becomes "relevant" because of a VERY NOTICEABLE spike, though this spike of damage said category causes to property and crops take place in years very apart one from the other. So the questions is raised again, is there a lack of data or its consistency? Still, even if said spikes are noticeable, the property damage spike exceeds 112 billion USDs, whereas the spike in crops damage barely exceeds 5 billion.
+
+So, did this event become harsher in said years, or is it a matter of frequency? And could the same be contemplated for the other events?
+
+#### Still, ultimately, Droughts are the most damaging for crops, accumulated over the years and even consistently across time.
+
+###### Though it's important to mention that, prior to 1990, there seem to be a lack of observations for all events, even hurricanes, which is why the timeframe prior to 1990 was cut off from the plots.
+
+```{r Injuries Results, fig.width = 12, echo=TRUE, message=FALSE, warning=FALSE}
+
+library(ggplot2)
+options(scipen=999)
+
+injuries <- ggplot(Casualties_total, aes(Event, Injuries))
+injuries <- injuries + geom_bar(stat="identity", position = "dodge") + ggtitle("Injuries vs Event Category") + theme(axis.text.x = element_text(angle = 90))
+injuries <- injuries + scale_y_continuous(labels = scales::comma)
+print(injuries)
+
+injuries_vs_year<- ggplot(Casualties_aggregation, aes(year, Injuries, fill = Event))
+injuries_vs_year <- injuries_vs_year + geom_bar(stat="identity", position = "dodge") + ggtitle("Yearly Injuries by Event")+ facet_wrap(.~Event, scales = "free_y") + theme(axis.text.x = element_text(angle = 90))
+injuries_vs_year <- injuries_vs_year  + scale_y_continuous(labels = scales::comma)
+print(injuries_vs_year)
+```
+
+As for injuries, there is no question that consistently, during the years, hundreds and even thousands can be attributed to Hurricanes and Tornadoes, which in turn give said category the 1° place overall, or accumulated over the years.
+
+#### Hurricanes, Tornadoes and High Winds are the weather events that leave the most injured in their wake, though this could be attributed to the increasingly evident lack of data prior to 1990. 
+
+```{r Fatalities Results, echo=TRUE, fig.width=12, message=FALSE, warning=FALSE}
+
+library(ggplot2)
+options(scipen=999)
+
+fatalities <- ggplot(Casualties_total, aes(Event, Fatalities))
+fatalities <- fatalities + geom_bar(stat="identity", position = "dodge") + ggtitle("Fatalities vs Event Category") + theme(axis.text.x = element_text(angle = 90))
+fatalities <- fatalities + scale_y_continuous(labels = scales::comma)
+print(fatalities)
+
+fatalities_vs_year<- ggplot(Casualties_aggregation, aes(year, Fatalities, fill = Event))
+fatalities_vs_year <- fatalities_vs_year + geom_bar(stat="identity", position = "dodge") + ggtitle("Yearly Fatalities by Event")+ facet_wrap(.~Event, scales = "free_y") + theme(axis.text.x = element_text(angle = 90))
+fatalities_vs_year <- fatalities_vs_year  + scale_y_continuous(labels = scales::comma)
+print(fatalities_vs_year)
+
+rm(list=ls())
+```
+
+Finally, Hurricanes, Tornadoes and High Winds are the events that cause the most deaths among weather events. HOWEVER, this event's deaths are measured since 1940, whereas other events since after 1990. In that regard, most deaths by hurricane amount to less than 200, and likely half the time, they even amount to no more than 50-something.
+
+On the other hand, Rain and Water events, Winter and Freezing events, High Temperatures events, Maritime Events, and even Lightnings, are comparatively as deadly, if not more, than Hurricanes, when the spikes are ignored, and if all were measured since 1990.
+
+#### So, Hurricanes, Tornadoes and High Winds seem to be the most deadly, probably because of some clear spikes, and likely due to a lack of data prior to 1990 for the other events.
+
+## Conclusions and Closing Words
+
+The AVAILABLE data (though the transformation of factors K, B, M, etc. might be part of the cause) shows that:
+
+- Hurricanes, Tornadoes, Rain and Floods are the most damaging for property.
+
+- Droughts, Heavy Rain and Floods, and Winter-Freezing precipitation are the most damaging for crops.
+
+- Hurricanes and Tornadoes leave the most injured in their wake, consistently across time and accumulated between 1960 and 2011.
+
+- Hurricanes and Tornadoes ALSO leave the most dead in their wake.
+
+However, the database seems to be lacking, as it makes no sense that only hurricanes, tornadoes and the like have caused damage, injuries and death prior to 1990.
+
+Still, attempting to determine the most damaging and/or deadly event by aggregating the data is too simplistic. And though adding the time variable might offer a more comprehensive view in the issue, it is not enough.
+
+In order to properly answer these questions, a risk management approach is necessary, and one would have to:
+
+(1) Estimate the probability that, any given day, one of the events can take place, for each year, by simply measuring the relative frequency.
+
+(2) Aggregate the damage/injured/dead by year and event, and multiply that value by the probability estimated by event and year.
+
+(3) Ignore all observations prior to 1980 or 1990.
+
+In that way, the accumulated damage and yearly damage can be compared, all relative to the likeness the events took place, all within the same timeframe.
+
+[^1]: [NOAA Website](https://www.noaa.gov/)
+
+[^2]: [FAQs](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf) state that a "tornado that crosses a county line or state line is considered a separate segment", and that the Storm Data file records the tornadoes as such "segments". It is safe to assume then, that a single event that crosses between counties or even states is divided in separate observations.
+
+[^3]:[Reproducible Research Peer-graded Assignment: Course Project 2](https://rpubs.com/EricTheBren/RepoResearchProj2) presents a very simple code chunk to replace the factor denominators.
+
+[^4]:[JoelTK's Reproducible Research: Peer Assignment 2](https://rpubs.com/JoelTK/205449) provides the means to summarize almost a thousand types of events into 14 categories.
